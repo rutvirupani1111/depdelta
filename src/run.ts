@@ -3,7 +3,7 @@
  * Each returns a Report that any formatter can render.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import type {
   CapabilityKey,
   FailOn,
@@ -64,6 +64,11 @@ export class RunError extends Error {
 }
 
 const DEFAULT_FAIL_ON: FailOn = 'high';
+
+/** A path relative to `cwd` with forward slashes, so reports read the same on every OS. */
+function displayPath(cwd: string, path: string): string {
+  return (relative(cwd, path) || path).split(sep).join('/');
+}
 
 function readOptional(path: string): string | undefined {
   try {
@@ -229,7 +234,7 @@ export async function runLockfileDiff(options: RunOptions = {}): Promise<Report>
     if (!existsSync(basePath)) throw new RunError(`lockfile not found: ${options.baseLockfile}`);
     baseText = stripBom(readFileSync(basePath, 'utf8'));
     basePj = readOptional(join(dirname(basePath), 'package.json'));
-    baseLabel = relative(cwd, basePath) || basePath;
+    baseLabel = displayPath(cwd, basePath);
   } else {
     const ref = options.base ?? 'HEAD';
     baseText = gitShowFile(ref, headPath, cwd);
@@ -240,7 +245,7 @@ export async function runLockfileDiff(options: RunOptions = {}): Promise<Report>
     }
     baseLabel = ref;
   }
-  const headLabel = options.baseLockfile ? relative(cwd, headPath) || headPath : 'working tree';
+  const headLabel = options.baseLockfile ? displayPath(cwd, headPath) : 'working tree';
 
   const ctx = createContext({ ...options, registry: policy.registry ?? options.registry });
   const registry = ctx.registry;
@@ -389,7 +394,7 @@ export async function runLockfileDiff(options: RunOptions = {}): Promise<Report>
     tool: { name: 'depdelta', version: VERSION },
     mode: 'lockfile',
     context: {
-      lockfile: relative(cwd, headPath) || headPath,
+      lockfile: displayPath(cwd, headPath),
       format: detectFormat(headPath, headText),
       base: baseLabel,
       head: headLabel,

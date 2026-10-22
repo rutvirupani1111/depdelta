@@ -5,7 +5,7 @@
 import type { Finding, PackageReport, Report, Severity } from '../types.js';
 import { SEVERITY_RANK } from '../types.js';
 import { formatDuration, listProse, plural } from '../util/text.js';
-import { capabilityLabel } from './style.js';
+import { capabilityLabel, displayRef } from './style.js';
 
 export const MARKDOWN_MARKER = '<!-- depdelta-report -->';
 
@@ -22,8 +22,9 @@ export function mdEscape(s: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/\|/g, '\\|')
     .replace(/([\\*_[\]])/g, '\\$1')
+    // Pipes last: escaping them adds a backslash that must not be escaped again.
+    .replace(/\|/g, '\\|')
     .replace(/\r?\n/g, ' ');
 }
 
@@ -155,7 +156,7 @@ export function renderMarkdown(report: Report, options: MarkdownOptions = {}): s
   if (r.removed.length) parts.push(`<sub>Removed: ${listProse(r.removed.map((x) => `\`${x.name}\` ${mdEscape(x.version)}`), 10)}</sub>`, '');
 
   const meta: string[] = [`depdelta ${r.tool.version}`];
-  if (r.context.base) meta.push(`base \`${r.context.base}\``);
+  if (r.context.base) meta.push(`base \`${displayRef(r.context.base)}\``);
   if (r.mode === 'lockfile') meta.push(`${plural(s.analyzed, 'package')} analyzed`);
   if (s.failed) meta.push(`${s.failed} not analyzed`);
   if (r.durationMs !== undefined) meta.push(formatDuration(r.durationMs));

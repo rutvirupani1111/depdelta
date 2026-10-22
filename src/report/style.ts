@@ -136,6 +136,12 @@ export function updateTag(t: Theme, u: UpdateType): string {
   }
 }
 
+/** Shortens full 40-character commit SHAs for display; other refs are shown as given. */
+export function displayRef(ref: string | undefined): string {
+  if (!ref) return '';
+  return /^[0-9a-f]{40}$/i.test(ref) ? ref.slice(0, 12) : ref;
+}
+
 /** Renders `code` spans: strips the backticks and highlights the content. */
 export function inlineCode(t: Theme, text: string): string {
   return text.replace(/`([^`]+)`/g, (_, c: string) => t.s.cyan(c));

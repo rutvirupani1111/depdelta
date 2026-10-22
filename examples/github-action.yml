@@ -1,0 +1,43 @@
+# depdelta on pull requests: copy this file to .github/workflows/depdelta.yml.
+#
+# On every pull request that changes a lockfile it writes the capability report
+# to the job summary, comments on the pull request when something reaches
+# fail-on (and keeps that comment up to date), uploads SARIF to code scanning,
+# and fails the check on high or critical findings.
+#
+# Allow expected behaviour per package in a .depdelta.json policy file.
+name: depdelta
+
+on:
+  pull_request:
+    paths:
+      - '**/package-lock.json'
+      - '**/npm-shrinkwrap.json'
+      - '**/pnpm-lock.yaml'
+      - '**/yarn.lock'
+
+permissions:
+  contents: read
+  pull-requests: write # for the comment; not needed with comment: never
+  security-events: write # for the SARIF upload; not needed without it
+
+jobs:
+  depdelta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Capability diff of the dependency updates
+        id: depdelta
+        uses: rutvirupani1111/depdelta@main
+        with:
+          fail-on: high
+          comment: on-failure
+
+      - name: Upload SARIF to code scanning
+        if: ${{ !cancelled() && steps.depdelta.outputs.sarif-file != '' }}
+        continue-on-error: true # pull requests from forks get a read-only token
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.depdelta.outputs.sarif-file }}
+          category: depdelta
