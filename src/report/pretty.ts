@@ -6,7 +6,7 @@ import type { CapabilityKey, Finding, PackageAnalysis, PackageReport, Report, Se
 import { SEVERITY_RANK } from '../types.js';
 import { padEnd, stripAnsi, visibleWidth } from '../util/ansi.js';
 import { formatBytes, formatDuration, listProse, plural } from '../util/text.js';
-import { badge, capabilityLabel, colorBySeverity, levelIcon, theme, updateTag, type Theme } from './style.js';
+import { badge, capabilityLabel, colorBySeverity, displayRef, levelIcon, theme, updateTag, type Theme } from './style.js';
 
 export interface PrettyOptions {
   color?: boolean;
@@ -65,6 +65,15 @@ function activeFindings(p: PackageReport): Finding[] {
 
 function visibleFindings(p: PackageReport, verbose: boolean): Finding[] {
   return activeFindings(p).filter((f) => verbose || f.severity !== 'info');
+}
+
+const MAX_NOTES_LISTED = 3;
+
+/** One gray line naming the info-level notes, so the footer's note count is never unexplained. */
+function notesLine(c: Ctx, notes: Finding[]): string {
+  const titles = notes.slice(0, MAX_NOTES_LISTED).map((n) => n.title.replace(/`/g, ''));
+  const more = notes.length > MAX_NOTES_LISTED ? ` (+${notes.length - MAX_NOTES_LISTED} more, --verbose)` : '';
+  return c.t.s.gray(`note: ${titles.join('; ')}${more}`);
 }
 
 function renderEvidence(c: Ctx, f: Finding, indent: string): string[] {
@@ -158,7 +167,7 @@ function renderPackage(c: Ctx, p: PackageReport, showContext: boolean): string[]
   for (const f of shown) body.push(renderFinding(c, f, '', c.width - 5));
   if (!c.verbose) {
     const notes = activeFindings(p).filter((f) => f.severity === 'info');
-    if (notes.length) body.push([t.s.gray(`note: ${notes.map((n) => n.title.replace(/`/g, '')).slice(0, 3).join('; ')}`)]);
+    if (notes.length) body.push([notesLine(c, notes)]);
   }
   const suppressed = p.findings.filter((f) => f.suppressed);
   if (suppressed.length) {
@@ -197,7 +206,12 @@ function header(c: Ctx, r: Report): string[] {
   if (r.mode === 'lockfile') {
     lines.push(`${title}  ${t.s.gray('capability diff of your dependency updates')}`);
     const ctx = r.context;
-    lines.push(` ${t.s.cyan(ctx.lockfile ?? 'lockfile')}  ${t.s.gray(`${ctx.base} ${t.g.arrow} ${ctx.head}`)}  ${t.s.gray(`(${ctx.format})`)}`);
+    // Two lockfiles on disk: the head label is the lockfile itself, so show "old -> new" once.
+    const where =
+      ctx.head !== undefined && ctx.head === ctx.lockfile
+        ? `${t.s.cyan(ctx.base ?? '')} ${t.s.gray(t.g.arrow)} ${t.s.cyan(ctx.lockfile)}`
+        : `${t.s.cyan(ctx.lockfile ?? 'lockfile')}  ${t.s.gray(`${displayRef(ctx.base)} ${t.g.arrow} ${ctx.head}`)}`;
+    lines.push(` ${where}  ${t.s.gray(`(${ctx.format})`)}`);
     const s = r.summary;
     const counts = [`${s.changed} changed`, `${s.added} added`, `${s.removed} removed`].join(t.s.gray(` ${t.g.dot} `));
     lines.push(` ${counts}`);
@@ -243,7 +257,10 @@ function footer(c: Ctx, r: Report): string[] {
       s.failOn !== 'never' && s.maxSeverity && SEVERITY_RANK[s.maxSeverity] >= SEVERITY_RANK[s.failOn]
         ? `findings reach "${s.failOn}" (--fail-on ${s.failOn})`
         : 'some packages could not be analyzed (--strict)';
-    lines.push(` ${t.s.red(`Failing because ${reason}.`)} ${t.s.gray('Allow expected behaviour in .depdelta.json.')}`);
+    const why = ` ${t.s.red(`Failing because ${reason}.`)}`;
+    const hint = t.s.gray('Allow expected behaviour in .depdelta.json.');
+    if (visibleWidth(why) + 1 + visibleWidth(hint) <= c.width) lines.push(`${why} ${hint}`);
+    else lines.push(why, ` ${hint}`);
   }
   const top = r.packages.flatMap((p) => activeFindings(p)).sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity])[0];
   if (top && top.severity !== 'info') lines.push(` ${t.s.gray('Details:')} depdelta explain ${top.id}`);
@@ -343,6 +360,11 @@ function renderScan(c: Ctx, r: Report): string[] {
   } else {
     lines.push(` ${t.s.green(`${t.g.ok} Nothing alarming for a newly added dependency.`)}`);
     lines.push('');
+  }
+  if (!c.verbose) {
+    // The footer counts notes; name them here (verbose mode shows them as findings above).
+    const notes = activeFindings(p).filter((f) => f.severity === 'info');
+    if (notes.length) lines.push(` ${notesLine(c, notes)}`, '');
   }
   return lines;
 }

@@ -1,0 +1,274 @@
+name: depdelta
+description: See what your dependency updates can suddenly do. Diffs the capabilities of every package a pull request changes in its lockfile.
+author: Rutvi Rupani
+branding:
+  icon: shield
+  color: orange
+
+# Every value that comes from inputs or the event payload reaches the scripts
+# through `env`, never through `${{ }}` inside `run`, so nothing can be
+# injected into a shell command.
+
+inputs:
+  fail-on:
+    description: Fail when a finding reaches this severity (critical, high, medium, low, info or never). Empty uses failOn from the policy file, else high.
+    required: false
+    default: ''
+  base:
+    description: Git ref or commit that holds the old lockfile. Empty uses the pull request base commit (the previous commit for push events). Missing commits are fetched; for branch names check out with fetch-depth 0.
+    required: false
+    default: ''
+  working-directory:
+    description: Directory that contains package.json and the lockfile.
+    required: false
+    default: '.'
+  lockfile:
+    description: Lockfile to inspect, relative to working-directory. Empty auto-detects npm-shrinkwrap.json, package-lock.json, pnpm-lock.yaml or yarn.lock.
+    required: false
+    default: ''
+  policy:
+    description: Policy file, relative to working-directory. Empty uses .depdelta.json when present.
+    required: false
+    default: ''
+  production:
+    description: Set to true to skip packages that are only used as devDependencies.
+    required: false
+    default: 'false'
+  strict:
+    description: Set to true to fail when a changed package cannot be analyzed.
+    required: false
+    default: 'false'
+  skip-unchanged:
+    description: Skip the run (and the build) when no lockfile in working-directory changed since the base.
+    required: false
+    default: 'true'
+  comment:
+    description: Post the markdown report as a pull request comment, updated in place on later runs (always, on-failure or never). Needs the pull-requests write permission.
+    required: false
+    default: never
+  sarif-file:
+    description: Where to write the SARIF report (relative paths are relative to the workspace). Empty writes it to the runner temp directory. The path is returned in the sarif-file output.
+    required: false
+    default: ''
+  registry:
+    description: Registry to download tarballs from (unauthenticated registries only).
+    required: false
+    default: ''
+  github-token:
+    description: Token used to read and write the pull request comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  passed:
+    description: '"true" when no finding reached fail-on, "false" otherwise. Empty when the run was skipped or failed.'
+    value: ${{ steps.run.outputs.passed }}
+  exit-code:
+    description: 'depdelta exit code: 0 passed, 1 findings at or above fail-on, 2 error. Empty when skipped.'
+    value: ${{ steps.run.outputs.exit-code }}
+  max-severity:
+    description: Highest severity found (critical, high, medium, low or info). Empty when there are no findings.
+    value: ${{ steps.run.outputs.max-severity }}
+  risk-score:
+    description: Highest package risk score, 0 to 100.
+    value: ${{ steps.run.outputs.risk-score }}
+  findings:
+    description: Number of findings at low severity or above, not counting findings the policy allows.
+    value: ${{ steps.run.outputs.findings }}
+  skipped:
+    description: '"true" when the run was skipped because no lockfile changed or no base commit was known.'
+    value: ${{ steps.changes.outputs.skip }}
+  markdown-file:
+    description: Path of the markdown report (also appended to the job summary).
+    value: ${{ steps.run.outputs.markdown-file }}
+  sarif-file:
+    description: Path of the SARIF report, for github/codeql-action/upload-sarif.
+    value: ${{ steps.run.outputs.sarif-file }}
+  json-file:
+    description: Path of the JSON report.
+    value: ${{ steps.run.outputs.json-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Find the base commit and changed lockfiles
+      id: changes
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_LOCKFILE: ${{ inputs.lockfile }}
+        INPUT_SKIP_UNCHANGED: ${{ inputs.skip-unchanged }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        PUSH_BEFORE: ${{ github.event.before }}
+      run: |
+        set -euo pipefail
+        base="$INPUT_BASE"
+        if [ -z "$base" ]; then
+          case "$EVENT_NAME" in
+            pull_request|pull_request_target) base="$PR_BASE_SHA" ;;
+            merge_group) base="$MERGE_GROUP_BASE_SHA" ;;
+            push) base="$PUSH_BEFORE" ;;
+          esac
+        fi
+        if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+          echo "::warning title=depdelta::No base commit to compare with for a $EVENT_NAME event. Set the base input."
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # Shallow checkouts (the default) do not contain the base commit: fetch just that commit.
+        if ! git cat-file -e "$base^{commit}" 2>/dev/null && [[ "$base" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+          git fetch --no-tags --quiet --depth=1 origin "$base" || echo "::warning title=depdelta::Could not fetch the base commit $base."
+        fi
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+        if [ "$INPUT_SKIP_UNCHANGED" = "true" ]; then
+          if [ -n "$INPUT_LOCKFILE" ]; then
+            set -- "$INPUT_LOCKFILE"
+          else
+            set -- npm-shrinkwrap.json package-lock.json pnpm-lock.yaml yarn.lock
+          fi
+          # Compares the base commit with the working tree, like depdelta itself.
+          if changed="$(git diff --name-only --relative "$base" -- "$@" 2>/dev/null)"; then
+            if [ -z "$changed" ]; then
+              echo "No lockfile changed since $base; skipping depdelta."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              printf '### depdelta\n\nNo lockfile changed since `%s`, nothing to analyze.\n' "$base" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Changed lockfiles: $(echo "$changed" | tr '\n' ' ')"
+          fi
+        fi
+        echo "skip=false" >> "$GITHUB_OUTPUT"
+
+    - name: Build depdelta
+      if: steps.changes.outputs.skip != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        node -e 'const major = Number(process.versions.node.split(".")[0]); if (major < 18) { console.log("::error title=depdelta::depdelta needs Node.js 18 or newer, found " + process.version); process.exit(1); }'
+        cd "$GITHUB_ACTION_PATH"
+        if [ -f dist/cli.js ]; then
+          echo "Using the prebuilt dist/cli.js."
+          exit 0
+        fi
+        # dist/ is not committed: build it from this checkout of the action.
+        # --ignore-scripts: no install script of any build dependency runs.
+        echo "::group::Building depdelta from the action checkout"
+        npm ci --ignore-scripts --no-audit --no-fund
+        npm run build
+        echo "::endgroup::"
+
+    - name: Run depdelta
+      id: run
+      if: steps.changes.outputs.skip != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BASE: ${{ steps.changes.outputs.base }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_LOCKFILE: ${{ inputs.lockfile }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_PRODUCTION: ${{ inputs.production }}
+        INPUT_STRICT: ${{ inputs.strict }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+        INPUT_REGISTRY: ${{ inputs.registry }}
+      run: |
+        set -uo pipefail
+        out="$(mktemp -d "${RUNNER_TEMP:-/tmp}/depdelta.XXXXXX")"
+        md="$out/report.md"
+        json="$out/report.json"
+        sarif="${INPUT_SARIF_FILE:-$out/depdelta.sarif}"
+        case "$sarif" in
+          /* | [A-Za-z]:*) ;;
+          *) sarif="$GITHUB_WORKSPACE/$sarif" ;;
+        esac
+        args=(--markdown-file "$md" --sarif-file "$sarif" --json-file "$json" --cache-dir "$out/cache" --color)
+        if [ -n "$BASE" ]; then args+=(--base "$BASE"); fi
+        if [ -n "$INPUT_FAIL_ON" ]; then args+=(--fail-on "$INPUT_FAIL_ON"); fi
+        if [ -n "$INPUT_LOCKFILE" ]; then args+=(--lockfile "$INPUT_LOCKFILE"); fi
+        if [ -n "$INPUT_POLICY" ]; then args+=(--policy "$INPUT_POLICY"); fi
+        if [ -n "$INPUT_REGISTRY" ]; then args+=(--registry "$INPUT_REGISTRY"); fi
+        if [ "$INPUT_PRODUCTION" = "true" ]; then args+=(--prod); fi
+        if [ "$INPUT_STRICT" = "true" ]; then args+=(--strict); fi
+
+        code=0
+        node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}" || code=$?
+
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        if [ -f "$json" ]; then
+          echo "json-file=$json" >> "$GITHUB_OUTPUT"
+          node -e '
+            const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).summary;
+            const f = s.findings;
+            console.log("passed=" + s.passed);
+            console.log("fail-on=" + s.failOn);
+            console.log("max-severity=" + (s.maxSeverity || ""));
+            console.log("risk-score=" + s.riskScore);
+            console.log("findings=" + (f.critical + f.high + f.medium + f.low));
+          ' "$json" >> "$GITHUB_OUTPUT"
+        fi
+        if [ -f "$sarif" ]; then echo "sarif-file=$sarif" >> "$GITHUB_OUTPUT"; fi
+        if [ -f "$md" ]; then
+          echo "markdown-file=$md" >> "$GITHUB_OUTPUT"
+          cat "$md" >> "$GITHUB_STEP_SUMMARY"
+        else
+          printf '### depdelta\n\ndepdelta could not complete (exit code %s). See the log of the "Run depdelta" step.\n' "$code" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Comment on the pull request
+      if: steps.run.outputs.markdown-file != '' && github.event.pull_request.number
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        MODE: ${{ inputs.comment }}
+        PASSED: ${{ steps.run.outputs.passed }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        MD: ${{ steps.run.outputs.markdown-file }}
+      run: |
+        set -uo pipefail
+        case "$MODE" in
+          always | true) ;;
+          on-failure) ;;
+          never | false | '') exit 0 ;;
+          *) echo "::warning title=depdelta::Unknown comment mode \"$MODE\" (use always, on-failure or never)."; exit 0 ;;
+        esac
+        # The report starts with <!-- depdelta-report -->: find our earlier comment and update it.
+        existing="$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | startswith("<!-- depdelta-report -->")) | .id' 2>/dev/null | head -n 1 || true)"
+        if [ "$MODE" = "on-failure" ] && [ "$PASSED" = "true" ] && [ -z "$existing" ]; then
+          echo "Nothing reached fail-on; not commenting."
+          exit 0
+        fi
+        if [ -n "$existing" ]; then
+          if gh api --method PATCH "repos/$REPO/issues/comments/$existing" -F "body=@$MD" > /dev/null; then
+            echo "Updated the depdelta comment."
+          else
+            echo "::warning title=depdelta::Could not update the pull request comment (needs pull-requests: write)."
+          fi
+        elif gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" -F "body=@$MD" > /dev/null; then
+          echo "Posted the depdelta comment."
+        else
+          echo "::warning title=depdelta::Could not comment on the pull request (needs pull-requests: write; pull requests from forks get a read-only token)."
+        fi
+
+    - name: Verdict
+      if: steps.changes.outputs.skip != 'true'
+      shell: bash
+      env:
+        CODE: ${{ steps.run.outputs.exit-code }}
+        FAIL_ON: ${{ steps.run.outputs.fail-on }}
+        MAX_SEVERITY: ${{ steps.run.outputs.max-severity }}
+      run: |
+        case "$CODE" in
+          0) echo "depdelta: no finding reached fail-on." ;;
+          1)
+            echo "::error title=depdelta::Dependency updates have findings at or above \"$FAIL_ON\" (highest: $MAX_SEVERITY). See the job summary."
+            exit 1
+            ;;
+          *)
+            echo "::error title=depdelta::depdelta could not complete (exit code ${CODE:-unknown}). See the log of the \"Run depdelta\" step."
+            exit 1
+            ;;
+        esac

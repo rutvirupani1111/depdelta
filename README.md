@@ -109,6 +109,63 @@ direct/transitive, dev and the dependency path that pulls them in.
 `sarif` (GitHub code scanning). `--markdown-file`, `--sarif-file` and `--json-file` write
 extra formats from the same run.
 
+## GitHub Action
+
+Run depdelta on every pull request that changes a lockfile. Copy
+[`examples/github-action.yml`](examples/github-action.yml) to `.github/workflows/depdelta.yml`:
+
+```yaml
+on:
+  pull_request:
+    paths: ['**/package-lock.json', '**/npm-shrinkwrap.json', '**/pnpm-lock.yaml', '**/yarn.lock']
+
+permissions:
+  contents: read
+  pull-requests: write   # for the comment
+  security-events: write # for the SARIF upload
+
+jobs:
+  depdelta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: depdelta
+        uses: rutvirupani1111/depdelta@main
+        with:
+          fail-on: high
+          comment: on-failure
+      - if: ${{ !cancelled() && steps.depdelta.outputs.sarif-file != '' }}
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.depdelta.outputs.sarif-file }}
+          category: depdelta
+```
+
+The action compares the pull request's lockfile with the base commit (fetched
+automatically from a shallow checkout), writes the markdown report to the job summary,
+writes SARIF for code scanning, optionally keeps one pull request comment up to date, and
+fails the check when a finding reaches `fail-on`. It skips itself when no lockfile changed,
+and builds depdelta from its own checkout, so it needs only Node.js 18+ on the runner.
+
+| Input | Default | |
+| --- | --- | --- |
+| `fail-on` | policy `failOn`, else `high` | `critical`, `high`, `medium`, `low`, `info` or `never` |
+| `comment` | `never` | `always`, `on-failure` or `never` (needs `pull-requests: write`) |
+| `base` | PR base commit | git ref or SHA holding the old lockfile |
+| `working-directory` | `.` | directory with `package.json` and the lockfile (one per monorepo package) |
+| `lockfile` | auto-detect | lockfile path inside `working-directory` |
+| `policy` | `.depdelta.json` if present | policy file |
+| `production` | `false` | skip packages only used as devDependencies |
+| `strict` | `false` | fail when a changed package cannot be analyzed |
+| `skip-unchanged` | `true` | skip the run when no lockfile changed |
+| `sarif-file` | runner temp dir | where to write the SARIF report |
+| `registry` | npm | registry to download tarballs from |
+| `github-token` | `github.token` | token for the comment |
+
+Outputs: `passed`, `exit-code`, `max-severity`, `risk-score`, `findings`, `skipped`,
+`markdown-file`, `sarif-file`, `json-file`.
+
 ## Policy file
 
 `.depdelta.json` in the working directory (or `--policy <file>`):
@@ -156,13 +213,17 @@ Also exported: `runLockfileDiff`, `runCompare`, `runScan`, `formatReport`, `pars
 These are complementary: depdelta catches the brand-new malicious release before any
 advisory exists, and leaves known-CVE tracking to audit tools.
 
+## More
+
+- [docs/EXAMPLES.md](docs/EXAMPLES.md): recorded output for real and synthetic updates, and an Action run.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it works, and why `acorn` is the only dependency.
+- [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+
 ## Coming soon
 
-- GitHub Action (`action.yml`, composite) that comments the markdown report on pull
-  requests and uploads SARIF. Not written yet; the CLI already produces both files.
-- Publishing to npm (`npx depdelta`).
-- docs/ARCHITECTURE.md, docs/EXAMPLES.md, CONTRIBUTING.md and SECURITY.md.
+- Publishing to npm (`npx depdelta`) and tagged Action releases with a prebuilt `dist/`.
 - Authenticated / private registries and HTTP proxies.
+- Policy `allow` entries scoped to version ranges.
 
 ## License
 
