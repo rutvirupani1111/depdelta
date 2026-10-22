@@ -1,0 +1,103 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      chalk:
+        specifier: ^5.3.0
+        version: 5.3.0
+      react-dom:
+        specifier: ^18.2.0
+        version: 18.2.0(react@18.2.0)
+      string-width-cjs:
+        specifier: npm:string-width@^4.2.0
+        version: string-width@4.2.3
+      my-tarball:
+        specifier: https://example.com/my-tarball-1.0.0.tgz
+        version: https://example.com/my-tarball-1.0.0.tgz
+    devDependencies:
+      vitest:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/utils:
+    dependencies:
+      '@demo/core':
+        specifier: workspace:*
+        version: link:../core
+      left-pad:
+        specifier: ^1.3.0
+        version: 1.3.0
+
+packages:
+
+  '@babel/code-frame@7.22.13':
+    resolution: {integrity: sha512-XktuhWlJ5g+3TJXc5upd9Ks1HutSArik6jf2eAjYFyIOf4ej3RN+184cZbzDvbPnuTJIUhPKKJE3cIsYTiAT3w==}
+    engines: {node: '>=6.9.0'}
+
+  chalk@5.3.0:
+    resolution: {integrity: sha512-dLitG79d+GV1Nb/VYcCDFivJeK1hiukt9QjRNVOsUtTy1rR1YJsmpGGTZ3qJos+uw7WmWF4wUwBd9jxjocFC2w==}
+    engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
+
+  left-pad@1.3.0:
+    resolution: {integrity: sha512-XI5MPzVNApjAyhQzphX8BkmKsKUxD4LdyK24iZeQEFUPB6oXjBKZ5EtNuVtTnD3dXvjATmPGzGMtiaGwcJt41A==}
+    deprecated: use String.prototype.padStart()
+
+  loose-envify@1.4.0:
+    resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
+    hasBin: true
+
+  my-tarball@https://example.com/my-tarball-1.0.0.tgz:
+    resolution: {tarball: https://example.com/my-tarball-1.0.0.tgz}
+    version: 1.0.0
+
+  react-dom@18.2.0:
+    resolution: {integrity: sha512-6IMTriUmvsjHUjNtEDudZfuDQUoWXVxKHhlEGSk81n4YFS+r/Kl99wXiwlVXtPBtJenozv2P+hxDsw9eA7Xo6g==}
+    peerDependencies:
+      react: ^18.2.0
+
+  react@18.2.0:
+    resolution: {integrity: sha512-/3IjMdb2L9QbBdWiW5e3P2/npwMBaU9mHCSCUzNln0ZCYbcfTsGbTJrU/kGemdH2IWmB2ioZ+zkxtmq6g09fGQ==}
+    engines: {node: '>=0.10.0'}
+
+  string-width@4.2.3:
+    resolution: {integrity: sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==}
+    engines: {node: '>=8'}
+
+  vitest@1.0.0:
+    resolution: {integrity: sha512-B0vdsXR2zP1+NQbwYmnOS65ZHgfMFL9n6GNWlv6yVa2D8BwI7LeelOGhSAqU+Ytg5MgDsQx0dsLEZ1pxN0KnNA==}
+    engines: {node: ^18.0.0 || >=20.0.0}
+    hasBin: true
+
+snapshots:
+
+  '@babel/code-frame@7.22.13': {}
+
+  chalk@5.3.0: {}
+
+  left-pad@1.3.0: {}
+
+  loose-envify@1.4.0: {}
+
+  my-tarball@https://example.com/my-tarball-1.0.0.tgz: {}
+
+  react-dom@18.2.0(react@18.2.0):
+    dependencies:
+      loose-envify: 1.4.0
+      react: 18.2.0
+
+  react@18.2.0:
+    dependencies:
+      loose-envify: 1.4.0
+
+  string-width@4.2.3: {}
+
+  vitest@1.0.0:
+    dependencies:
+      '@babel/code-frame': 7.22.13
+      chalk: 5.3.0
